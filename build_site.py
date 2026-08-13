@@ -33,15 +33,6 @@ def fetch_historical_3yr(key):
         pass
     return []
 
-def calculate_ema(prices, period=20):
-    if len(prices) < period:
-        return prices[-1] if prices else 0.0
-    k = 2 / (period + 1)
-    ema = sum(prices[:period]) / period
-    for price in prices[period:]:
-        ema = (price * k) + (ema * (1 - k))
-    return ema
-
 def run_screener_engine():
     date_records = {} # { "YYYY-MM-DD": [ {stock_data}, ... ] }
 
@@ -50,8 +41,6 @@ def run_screener_engine():
         if not candles:
             continue
 
-        # Candles from Upstox are descending by date: [timestamp, open, high, low, close, volume, oi]
-        # Reverse to chronological order for indicator calculations
         chrono_candles = list(reversed(candles))
         closes = [c[4] for c in chrono_candles]
         
@@ -93,7 +82,6 @@ def run_screener_engine():
             past_365_highs = [x[2] for x in chrono_candles[max(0, i-365):i]]
             max_365 = max(past_365_highs) if past_365_highs else hi
             
-            # Cross checks
             crossed_above_ema20 = (prev_cl <= prev_ema20 and cl > curr_ema20)
             crossed_below_ema20 = (prev_cl >= prev_ema20 and cl < curr_ema20)
 
@@ -129,19 +117,13 @@ def run_screener_engine():
         .card {{ background: #1e1e1e; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 12px; }}
         .header {{ font-size: 16px; font-weight: bold; color: #00e676; margin-bottom: 2px; }}
         .subtitle {{ font-size: 10px; color: #aaa; margin-bottom: 10px; }}
-        
         .section-title {{ font-size: 12px; font-weight: bold; color: #00e676; margin: 10px 0 6px 0; border-bottom: 1px solid #333; padding-bottom: 4px; }}
-        
-        /* Filter Row Grid */
         .filter-row {{ display: grid; grid-template-columns: 24px 1fr 100px 80px; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 11px; }}
         .filter-row input[type="text"], .filter-row input[type="number"], .filter-row select {{ background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 4px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }}
-        
         .date-panel {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }}
         .date-panel label {{ font-size: 10px; color: #aaa; display: block; margin-bottom: 2px; }}
         .date-panel input {{ background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }}
-        
         .btn {{ background: #00e676; color: #121212; font-weight: bold; border: none; padding: 8px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; width: 100%; margin-top: 6px; }}
-        
         table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
         th, td {{ padding: 6px; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 11px; }}
         th {{ color: #888; background: #181818; }}
@@ -152,7 +134,6 @@ def run_screener_engine():
         <div class="header">⚡ Master Screener & Backtest Engine</div>
         <div class="subtitle">Snapshot: {get_ist_time()} | Matches: <span id="match-count">0</span></div>
         
-        <!-- Date Inspector -->
         <div class="date-panel">
             <div>
                 <label>Inspector Date (Screen View)</label>
@@ -166,15 +147,14 @@ def run_screener_engine():
 
         <div class="section-title">🎛️ 9 Master Customizable Filters (Update 1)</div>
 
-        <!-- Filter 1 -->
         <div class="filter-row">
             <input type="checkbox" id="f1_en" checked onchange="applyFilters()">
             <span>1. Close vs EMA 20</span>
             <select id="f1_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
-                <option value="<="><=</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
+                <option value="&lt;=">&lt;=</option>
                 <option value="==">==</option>
                 <option value="crossed_above">Crossed Above</option>
                 <option value="crossed_below">Crossed Below</option>
@@ -182,109 +162,100 @@ def run_screener_engine():
             <span>EMA 20</span>
         </div>
 
-        <!-- Filter 2 -->
         <div class="filter-row">
             <input type="checkbox" id="f2_en" checked onchange="applyFilters()">
             <span>2. RVOL</span>
             <select id="f2_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f2_val" value="1.5" step="0.1" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 3 -->
         <div class="filter-row">
             <input type="checkbox" id="f3_en" checked onchange="applyFilters()">
             <span>3. Min % Change</span>
             <select id="f3_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f3_val" value="2.0" step="0.5" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 4 -->
         <div class="filter-row">
             <input type="checkbox" id="f4_en" checked onchange="applyFilters()">
             <span>4. Max % Change</span>
             <select id="f4_op" onchange="applyFilters()">
-                <option value="<"><</option>
-                <option value="<=" selected><=</option>
-                <option value=">">></option>
+                <option value="&lt;">&lt;</option>
+                <option value="&lt;=" selected>&lt;=</option>
+                <option value="&gt;">&gt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f4_val" value="10.0" step="0.5" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 5 -->
         <div class="filter-row">
             <input type="checkbox" id="f5_en" checked onchange="applyFilters()">
             <span>5. Min Daily Close</span>
             <select id="f5_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f5_val" value="100" step="10" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 6 -->
         <div class="filter-row">
             <input type="checkbox" id="f6_en" checked onchange="applyFilters()">
             <span>6. Max Daily Close</span>
             <select id="f6_op" onchange="applyFilters()">
-                <option value="<"><</option>
-                <option value="<=" selected><=</option>
-                <option value=">">></option>
+                <option value="&lt;">&lt;</option>
+                <option value="&lt;=" selected>&lt;=</option>
+                <option value="&gt;">&gt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f6_val" value="2000" step="50" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 7 -->
         <div class="filter-row">
             <input type="checkbox" id="f7_en" checked onchange="applyFilters()">
             <span>7. Min Turnover (Cr)</span>
             <select id="f7_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f7_val" value="50" step="5" oninput="applyFilters()">
         </div>
 
-        <!-- Filter 8 -->
         <div class="filter-row">
             <input type="checkbox" id="f8_en" checked onchange="applyFilters()">
             <span>8. Close vs 365D High</span>
             <select id="f8_op" onchange="applyFilters()">
-                <option value=">=" selected>>= 365D High</option>
-                <option value="<">< 365D High</option>
+                <option value="&gt;=" selected>&gt;= 365D High</option>
+                <option value="&lt;">&lt; 365D High</option>
             </select>
             <span>High</span>
         </div>
 
-        <!-- Filter 9 -->
         <div class="filter-row">
             <input type="checkbox" id="f9_en" checked onchange="applyFilters()">
             <span>9. Min Upper Wick %</span>
             <select id="f9_op" onchange="applyFilters()">
-                <option value=">">></option>
-                <option value=">=" selected>>=</option>
-                <option value="<"><</option>
+                <option value="&gt;">&gt;</option>
+                <option value="&gt;=" selected>&gt;=</option>
+                <option value="&lt;">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f9_val" value="40" step="5" oninput="applyFilters()">
         </div>
 
-        <!-- Backtest CSV Export Panel (Update 2) -->
         <div class="section-title">📊 Backtest CSV Downloader (Update 2)</div>
         <div class="date-panel">
             <div>
@@ -319,7 +290,6 @@ def run_screener_engine():
         const records = {json_records};
         const dates = Object.keys(records).sort().reverse();
 
-        // Auto-Set Default Dates to Latest Trading Day
         if (dates.length > 0) {{
             const latest = dates[0];
             const oldest = dates[dates.length - 1];
@@ -328,7 +298,7 @@ def run_screener_engine():
             document.getElementById('singleDate').min = oldest;
             document.getElementById('singleDate').max = latest;
 
-            document.getElementById('fromDate').value = dates[Math.min(20, dates.length - 1)]; // 20 sessions ago
+            document.getElementById('fromDate').value = dates[Math.min(20, dates.length - 1)];
             document.getElementById('fromDate').min = oldest;
             document.getElementById('fromDate').max = latest;
 
@@ -338,16 +308,15 @@ def run_screener_engine():
         }}
 
         function compare(val1, op, val2) {{
-            if (op === '>') return val1 > val2;
-            if (op === '>=') return val1 >= val2;
-            if (op === '<') return val1 < val2;
-            if (op === '<=') return val1 <= val2;
+            if (op === '>' || op === '&gt;') return val1 > val2;
+            if (op === '>=' || op === '&gt;=') return val1 >= val2;
+            if (op === '<' || op === '&lt;') return val1 < val2;
+            if (op === '<=' || op === '&lt;=') return val1 <= val2;
             if (op === '==') return val1 === val2;
             return true;
         }}
 
         function evalStock(s) {{
-            // 1. Close vs EMA 20
             if (document.getElementById('f1_en').checked) {{
                 const op = document.getElementById('f1_op').value;
                 if (op === 'crossed_above' && !s.crossed_above_ema20) return false;
@@ -357,56 +326,48 @@ def run_screener_engine():
                 }}
             }}
 
-            // 2. RVOL
             if (document.getElementById('f2_en').checked) {{
                 const op = document.getElementById('f2_op').value;
                 const val = parseFloat(document.getElementById('f2_val').value) || 0;
                 if (!compare(s.rvol, op, val)) return false;
             }}
 
-            // 3. Min % Change
             if (document.getElementById('f3_en').checked) {{
                 const op = document.getElementById('f3_op').value;
                 const val = parseFloat(document.getElementById('f3_val').value) || 0;
                 if (!compare(s.pct, op, val)) return false;
             }}
 
-            // 4. Max % Change
             if (document.getElementById('f4_en').checked) {{
                 const op = document.getElementById('f4_op').value;
                 const val = parseFloat(document.getElementById('f4_val').value) || 0;
                 if (!compare(s.pct, op, val)) return false;
             }}
 
-            // 5. Min Daily Close
             if (document.getElementById('f5_en').checked) {{
                 const op = document.getElementById('f5_op').value;
                 const val = parseFloat(document.getElementById('f5_val').value) || 0;
                 if (!compare(s.close, op, val)) return false;
             }}
 
-            // 6. Max Daily Close
             if (document.getElementById('f6_en').checked) {{
                 const op = document.getElementById('f6_op').value;
                 const val = parseFloat(document.getElementById('f6_val').value) || 0;
                 if (!compare(s.close, op, val)) return false;
             }}
 
-            // 7. Min Turnover
             if (document.getElementById('f7_en').checked) {{
                 const op = document.getElementById('f7_op').value;
                 const val = parseFloat(document.getElementById('f7_val').value) || 0;
                 if (!compare(s.turnover, op, val)) return false;
             }}
 
-            // 8. Close vs 365D High
             if (document.getElementById('f8_en').checked) {{
                 const op = document.getElementById('f8_op').value;
-                if (op === '>=' && s.close < s.max_365) return false;
-                if (op === '<' && s.close >= s.max_365) return false;
+                if ((op === '>=' || op === '&gt;=') && s.close < s.max_365) return false;
+                if ((op === '<' || op === '&lt;') && s.close >= s.max_365) return false;
             }}
 
-            // 9. Min Upper Wick %
             if (document.getElementById('f9_en').checked) {{
                 const op = document.getElementById('f9_op').value;
                 const val = parseFloat(document.getElementById('f9_val').value) || 0;
@@ -465,4 +426,26 @@ def run_screener_engine():
 
             dates.forEach(d => {{
                 if (d >= fromStr && d <= toStr) {{
-                    const dayData = recor
+                    const dayData = records[d] || [];
+                    dayData.forEach(s => {{
+                        if (evalStock(s)) {{
+                            csvRows.push(`${{d}},${{s.sym}},${{s.close}},${{s.pct}},${{s.rvol}},${{s.turnover}},${{s.wick}},${{s.ema20}}`);
+                        }}
+                    }});
+                }}
+            }});
+
+            if (csvRows.length <= 1) {{
+                alert('No stocks matched your active filters in the chosen date range.');
+                return;
+            }}
+
+            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\\n");
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `backtest_${{fromStr}}_to_${{toStr}}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }}
