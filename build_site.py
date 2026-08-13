@@ -1,22 +1,46 @@
 import os
 import requests
 import json
+import gzip
+import csv
+import io
 from datetime import datetime, timezone, timedelta
 
 UPSTOX_TOKEN = os.environ.get("eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw", "")
 
-# Target Equity Instrument Keys
-INSTRUMENTS = {
-    "NSE_EQ|INE021A01026": "AARTIIND",
-    "NSE_EQ|INE002A01018": "RELIANCE",
-    "NSE_EQ|INE040A01034": "HDFCBANK",
-    "NSE_EQ|INE009A01021": "INFY",
-    "NSE_EQ|INE216A01030": "TATAMOTORS"
-}
-
 def get_ist_time():
     ist_now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
     return ist_now.strftime("%Y-%m-%d %I:%M:%S %p IST")
+
+def fetch_all_nse_equity_instruments():
+    """Downloads official Upstox Instrument Master CSV and extracts all NSE EQ stocks"""
+    url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
+    instruments = {}
+    try:
+        res = requests.get(url, timeout=30)
+        if res.status_code == 200:
+            with gzip.open(io.BytesIO(res.content), mode='rt', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Filter for standard NSE Equity stocks
+                    if row.get('segment') == 'NSE_EQ' and row.get('instrument_type') == 'EQ':
+                        key = row.get('instrument_key')
+                        sym = row.get('trading_symbol') or row.get('name')
+                        if key and sym and not sym.endswith("-BE") and not sym.endswith("-BZ"):
+                            instruments[key] = sym
+    except Exception as e:
+        print(f"Error fetching instrument list: {e}")
+    
+    # Fallback to major stocks if file fetch fails
+    if not instruments:
+        instruments = {
+            "NSE_EQ|INE021A01026": "AARTIIND",
+            "NSE_EQ|INE002A01018": "RELIANCE",
+            "NSE_EQ|INE040A01034": "HDFCBANK",
+            "NSE_EQ|INE009A01021": "INFY",
+            "NSE_EQ|INE216A01030": "TATAMOTORS"
+        }
+    return instruments
 
 def fetch_historical_3yr(key):
     to_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -29,19 +53,22 @@ def fetch_historical_3yr(key):
     }
     
     try:
-        res = requests.get(url, headers=headers, timeout=15)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             return res.json().get("data", {}).get("candles", [])
-    except Exception as e:
-        print(f"Error fetching {key}: {e}")
+    except Exception:
+        pass
     return []
 
 def run_screener_engine():
+    instruments = fetch_all_nse_equity_instruments()
+    print(f"Loaded {len(instruments)} NSE Equity stocks.")
+
     date_records = {}
 
-    for key, symbol in INSTRUMENTS.items():
+    for key, symbol in instruments.items():
         candles = fetch_historical_3yr(key)
-        if not candles:
+        if not candles or len(candles) < 20:
             continue
 
         chrono_candles = list(reversed(candles))
@@ -175,7 +202,7 @@ def run_screener_engine():
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f3_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f3_en" onchange="applyFilters()">
             <span>3. Min % Change</span>
             <select id="f3_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -432,35 +459,4 @@ def run_screener_engine():
                             csvRows.push(`${d},${s.sym},${s.close},${s.pct},${s.rvol},${s.turnover},${s.wick},${s.ema20}`);
                         }
                     });
-                }
-            });
-
-            if (csvRows.length <= 1) {
-                alert('No stocks matched your active filters in the chosen date range.');
-                return;
-            }
-
-            const nl = String.fromCharCode(10);
-            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join(nl);
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `backtest_${fromStr}_to_${toStr}.csv`);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-
-        applyFilters();
-    </script>
-</body>
-</html>"""
-
-    final_html = html_template.replace("__JSON_DATA__", json_records).replace("__IST_TIME__", get_ist_time())
-
-    with open("index.html", "w") as f:
-        f.write(final_html)
-
-if __name__ == "__main__":
-    run_screener_engine()
-        
+  
