@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 
 UPSTOX_TOKEN = os.environ.get("eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw", "")
 
-# Instrument Keys for target equities
+# Target Equity Instrument Keys
 INSTRUMENTS = {
     "NSE_EQ|INE021A01026": "AARTIIND",
     "NSE_EQ|INE002A01018": "RELIANCE",
@@ -23,14 +23,17 @@ def fetch_historical_3yr(key):
     from_date = (datetime.now(timezone.utc) - timedelta(days=3*365)).strftime("%Y-%m-%d")
     
     url = f"https://api.upstox.com/v2/historical-candle/{key}/day/{to_date}/{from_date}"
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {UPSTOX_TOKEN}"
+    }
     
     try:
         res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200:
             return res.json().get("data", {}).get("candles", [])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error fetching {key}: {e}")
     return []
 
 def run_screener_engine():
@@ -138,14 +141,14 @@ def run_screener_engine():
             </div>
             <div>
                 <label>Search Symbol</label>
-                <input type="text" id="searchSym" placeholder="e.g. AARTI" oninput="applyFilters()" style="background:#2a2a2a; border:1px solid #444; color:#fff; padding:6px; border-radius:4px; font-size:11px; width:100%; box-sizing:border-box;">
+                <input type="text" id="searchSym" placeholder="e.g. AARTI" oninput="applyFilters()">
             </div>
         </div>
 
-        <div class="section-title">🎛️ 9 Master Customizable Filters (Update 1)</div>
+        <div class="section-title">🎛️ 9 Master Customizable Filters</div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f1_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f1_en" onchange="applyFilters()">
             <span>1. Close vs EMA 20</span>
             <select id="f1_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -160,7 +163,7 @@ def run_screener_engine():
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f2_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f2_en" onchange="applyFilters()">
             <span>2. RVOL</span>
             <select id="f2_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -168,7 +171,7 @@ def run_screener_engine():
                 <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
-            <input type="number" id="f2_val" value="1.5" step="0.1" oninput="applyFilters()">
+            <input type="number" id="f2_val" value="1.0" step="0.1" oninput="applyFilters()">
         </div>
 
         <div class="filter-row">
@@ -180,11 +183,11 @@ def run_screener_engine():
                 <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
-            <input type="number" id="f3_val" value="2.0" step="0.5" oninput="applyFilters()">
+            <input type="number" id="f3_val" value="0.0" step="0.5" oninput="applyFilters()">
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f4_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f4_en" onchange="applyFilters()">
             <span>4. Max % Change</span>
             <select id="f4_op" onchange="applyFilters()">
                 <option value="<">&lt;</option>
@@ -196,7 +199,7 @@ def run_screener_engine():
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f5_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f5_en" onchange="applyFilters()">
             <span>5. Min Daily Close</span>
             <select id="f5_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -208,7 +211,7 @@ def run_screener_engine():
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f6_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f6_en" onchange="applyFilters()">
             <span>6. Max Daily Close</span>
             <select id="f6_op" onchange="applyFilters()">
                 <option value="<">&lt;</option>
@@ -216,11 +219,11 @@ def run_screener_engine():
                 <option value=">">&gt;</option>
                 <option value="==">==</option>
             </select>
-            <input type="number" id="f6_val" value="2000" step="50" oninput="applyFilters()">
+            <input type="number" id="f6_val" value="3000" step="50" oninput="applyFilters()">
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f7_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f7_en" onchange="applyFilters()">
             <span>7. Min Turnover (Cr)</span>
             <select id="f7_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -228,11 +231,11 @@ def run_screener_engine():
                 <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
-            <input type="number" id="f7_val" value="50" step="5" oninput="applyFilters()">
+            <input type="number" id="f7_val" value="1" step="1" oninput="applyFilters()">
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f8_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f8_en" onchange="applyFilters()">
             <span>8. Close vs 365D High</span>
             <select id="f8_op" onchange="applyFilters()">
                 <option value=">=" selected>&gt;= 365D High</option>
@@ -242,7 +245,7 @@ def run_screener_engine():
         </div>
 
         <div class="filter-row">
-            <input type="checkbox" id="f9_en" checked onchange="applyFilters()">
+            <input type="checkbox" id="f9_en" onchange="applyFilters()">
             <span>9. Min Upper Wick %</span>
             <select id="f9_op" onchange="applyFilters()">
                 <option value=">">&gt;</option>
@@ -250,10 +253,10 @@ def run_screener_engine():
                 <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
-            <input type="number" id="f9_val" value="40" step="5" oninput="applyFilters()">
+            <input type="number" id="f9_val" value="20" step="5" oninput="applyFilters()">
         </div>
 
-        <div class="section-title">📊 Backtest CSV Downloader (Update 2)</div>
+        <div class="section-title">📊 Backtest CSV Downloader</div>
         <div class="date-panel">
             <div>
                 <label>From Date</label>
@@ -437,7 +440,8 @@ def run_screener_engine():
                 return;
             }
 
-            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\n");
+            const nl = String.fromCharCode(10);
+            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join(nl);
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
@@ -459,4 +463,4 @@ def run_screener_engine():
 
 if __name__ == "__main__":
     run_screener_engine()
-    
+        
