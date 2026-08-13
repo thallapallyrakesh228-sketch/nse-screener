@@ -1,10 +1,11 @@
 import os
 import requests
+import json
 from datetime import datetime, timezone, timedelta
 
 UPSTOX_TOKEN = os.environ.get("eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw", "")
 
-# Sample Instrument Keys for standard equities
+# Instrument Keys for target equities
 INSTRUMENTS = [
     "NSE_EQ|INE021A01026", # AARTIIND
     "NSE_EQ|INE002A01018", # RELIANCE
@@ -27,8 +28,7 @@ def run_realtime_screener():
     url = f"https://api.upstox.com/v2/market-quote/quotes?instrument_key={keys}"
     
     res = requests.get(url, headers=headers, timeout=15)
-    rows_html = ""
-    match_count = 0
+    stocks_list = []
 
     if res.status_code == 200:
         data = res.json().get("data", {})
@@ -47,30 +47,21 @@ def run_realtime_screener():
             if prev_close == 0:
                 continue
 
-            pct_change = ((ltp - prev_close) / prev_close) * 100.0
-            turnover_cr = (ltp * volume) / 10000000.0
+            pct_change = round(((ltp - prev_close) / prev_close) * 100.0, 2)
+            turnover_cr = round((ltp * volume) / 10000000.0, 2)
             
             candle_span = hi - lo
-            upper_wick = (((hi - max(op, ltp)) / candle_span) * 100.0) if candle_span > 0 else 0.0
+            upper_wick = round((((hi - max(op, ltp)) / candle_span) * 100.0), 1) if candle_span > 0 else 0.0
 
-            chg_color = "#00e676" if pct_change > 0 else ("#ff5252" if pct_change < 0 else "#888")
-            chg_sign = "+" if pct_change > 0 else ""
+            stocks_list.append({
+                "sym": sym,
+                "ltp": round(ltp, 2),
+                "pct": pct_change,
+                "turnover": turnover_cr,
+                "wick": upper_wick
+            })
 
-            # Filter Condition
-            if pct_change >= 0.5:
-                match_count += 1
-                rows_html += f"""
-                <tr>
-                    <td><b>{sym}</b></td>
-                    <td>₹{round(ltp, 2)}</td>
-                    <td style="color:{chg_color}; font-weight:bold;">{chg_sign}{round(pct_change, 2)}%</td>
-                    <td>₹{round(turnover_cr, 2)} Cr</td>
-                    <td>{round(upper_wick, 1)}%</td>
-                </tr>
-                """
-
-    if not rows_html:
-        rows_html = '<tr><td colspan="5" style="text-align:center; color:#888;">No stocks matched criteria at this snapshot time.</td></tr>'
+    json_stocks = json.dumps(stocks_list)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -80,9 +71,16 @@ def run_realtime_screener():
     <title>Real-Time Live Screener</title>
     <style>
         body {{ font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0; padding: 12px; margin: 0; }}
-        .card {{ background: #1e1e1e; padding: 12px; border-radius: 8px; border: 1px solid #333; }}
-        .header {{ font-size: 15px; font-weight: bold; color: #00e676; margin-bottom: 4px; }}
+        .card {{ background: #1e1e1e; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 12px; }}
+        .header {{ font-size: 16px; font-weight: bold; color: #00e676; margin-bottom: 4px; }}
         .subtitle {{ font-size: 11px; color: #aaa; margin-bottom: 12px; }}
+        
+        /* Filter Controls Styling */
+        .filter-panel {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }}
+        .filter-group {{ display: flex; flex-direction: column; }}
+        .filter-group label {{ font-size: 11px; color: #aaa; margin-bottom: 2px; }}
+        .filter-group input {{ background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; font-size: 12px; }}
+        
         table {{ width: 100%; border-collapse: collapse; }}
         th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 12px; }}
         th {{ color: #888; background: #181818; }}
@@ -90,8 +88,29 @@ def run_realtime_screener():
 </head>
 <body>
     <div class="card">
-        <div class="header">⚡ NSE Breakout Screener (Live Candle Mode)</div>
-        <div class="subtitle">Snapshot Time: {get_ist_time()} | Matches: {match_count}</div>
+        <div class="header">⚡ Dynamic NSE Breakout Screener</div>
+        <div class="subtitle">Snapshot Time: {get_ist_time()} | <span id="match-count">0</span> Matches</div>
+        
+        <!-- Interactive Mobile Filter Panel -->
+        <div class="filter-panel">
+            <div class="filter-group">
+                <label>Min % Change</label>
+                <input type="number" id="minPct" value="0.5" step="0.5" oninput="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>Min Turnover (Cr)</label>
+                <input type="number" id="minTurnover" value="0" step="0.5" oninput="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>Max Upper Wick %</label>
+                <input type="number" id="maxWick" value="100" step="5" oninput="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>Search Stock</label>
+                <input type="text" id="searchSym" placeholder="e.g. AARTI" oninput="applyFilters()">
+            </div>
+        </div>
+
         <table>
             <thead>
                 <tr>
@@ -99,14 +118,56 @@ def run_realtime_screener():
                     <th>LTP</th>
                     <th>Change</th>
                     <th>Turnover</th>
-                    <th>Upper Wick</th>
+                    <th>Wick</th>
                 </tr>
             </thead>
-            <tbody>
-                {rows_html}
+            <tbody id="table-body">
             </tbody>
         </table>
     </div>
+
+    <script>
+        const stocks = {json_stocks};
+
+        function applyFilters() {{
+            const minPct = parseFloat(document.getElementById('minPct').value) || -100;
+            const minTurnover = parseFloat(document.getElementById('minTurnover').value) || 0;
+            const maxWick = parseFloat(document.getElementById('maxWick').value) || 100;
+            const searchSym = document.getElementById('searchSym').value.toUpperCase().trim();
+
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+            
+            let matches = 0;
+
+            stocks.forEach(s => {{
+                if (s.pct >= minPct && s.turnover >= minTurnover && s.wick <= maxWick) {{
+                    if (searchSym === '' || s.sym.includes(searchSym)) {{
+                        matches++;
+                        const color = s.pct > 0 ? '#00e676' : (s.pct < 0 ? '#ff5252' : '#888');
+                        const sign = s.pct > 0 ? '+' : '';
+                        
+                        const row = `<tr>
+                            <td><b>${{s.sym}}</b></td>
+                            <td>₹${{s.ltp}}</td>
+                            <td style="color:${{color}}; font-weight:bold;">${{sign}}${{s.pct}}%</td>
+                            <td>₹${{s.turnover}} Cr</td>
+                            <td>${{s.wick}}%</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
+                    }}
+                }}
+            }});
+
+            document.getElementById('match-count').innerText = matches;
+            if (matches === 0) {{
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#888;">No stocks match your active filters.</td></tr>';
+            }}
+        }}
+
+        // Run filter on initial page load
+        applyFilters();
+    </script>
 </body>
 </html>"""
 
@@ -115,4 +176,3 @@ def run_realtime_screener():
 
 if __name__ == "__main__":
     run_realtime_screener()
-  
