@@ -34,7 +34,7 @@ def fetch_historical_3yr(key):
     return []
 
 def run_screener_engine():
-    date_records = {} # { "YYYY-MM-DD": [ {stock_data}, ... ] }
+    date_records = {}
 
     for key, symbol in INSTRUMENTS.items():
         candles = fetch_historical_3yr(key)
@@ -44,7 +44,6 @@ def run_screener_engine():
         chrono_candles = list(reversed(candles))
         closes = [c[4] for c in chrono_candles]
         
-        # Precompute EMA 20 history
         ema20_series = []
         k = 2 / (20 + 1)
         current_ema = None
@@ -73,12 +72,10 @@ def run_screener_engine():
             span = hi - lo
             upper_wick = round((((hi - max(op, cl)) / span) * 100.0), 1) if span > 0 else 0.0
             
-            # 20-day Average Volume for RVOL
             past_vols = [x[5] for x in chrono_candles[max(0, i-20):i]]
             avg_vol20 = sum(past_vols) / len(past_vols) if past_vols else vol
             rvol = round(vol / avg_vol20, 2) if avg_vol20 > 0 else 1.0
             
-            # 365-day High
             past_365_highs = [x[2] for x in chrono_candles[max(0, i-365):i]]
             max_365 = max(past_365_highs) if past_365_highs else hi
             
@@ -106,33 +103,33 @@ def run_screener_engine():
 
     json_records = json.dumps(date_records)
 
-    html_content = f"""<!DOCTYPE html>
+    html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Master Screener & Backtester</title>
     <style>
-        body {{ font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0; padding: 10px; margin: 0; }}
-        .card {{ background: #1e1e1e; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 12px; }}
-        .header {{ font-size: 16px; font-weight: bold; color: #00e676; margin-bottom: 2px; }}
-        .subtitle {{ font-size: 10px; color: #aaa; margin-bottom: 10px; }}
-        .section-title {{ font-size: 12px; font-weight: bold; color: #00e676; margin: 10px 0 6px 0; border-bottom: 1px solid #333; padding-bottom: 4px; }}
-        .filter-row {{ display: grid; grid-template-columns: 24px 1fr 100px 80px; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 11px; }}
-        .filter-row input[type="text"], .filter-row input[type="number"], .filter-row select {{ background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 4px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }}
-        .date-panel {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }}
-        .date-panel label {{ font-size: 10px; color: #aaa; display: block; margin-bottom: 2px; }}
-        .date-panel input {{ background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }}
-        .btn {{ background: #00e676; color: #121212; font-weight: bold; border: none; padding: 8px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; width: 100%; margin-top: 6px; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
-        th, td {{ padding: 6px; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 11px; }}
-        th {{ color: #888; background: #181818; }}
+        body { font-family: -apple-system, sans-serif; background: #121212; color: #e0e0e0; padding: 10px; margin: 0; }
+        .card { background: #1e1e1e; padding: 12px; border-radius: 8px; border: 1px solid #333; margin-bottom: 12px; }
+        .header { font-size: 16px; font-weight: bold; color: #00e676; margin-bottom: 2px; }
+        .subtitle { font-size: 10px; color: #aaa; margin-bottom: 10px; }
+        .section-title { font-size: 12px; font-weight: bold; color: #00e676; margin: 10px 0 6px 0; border-bottom: 1px solid #333; padding-bottom: 4px; }
+        .filter-row { display: grid; grid-template-columns: 24px 1fr 100px 80px; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 11px; }
+        .filter-row input[type="text"], .filter-row input[type="number"], .filter-row select { background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 4px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }
+        .date-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .date-panel label { font-size: 10px; color: #aaa; display: block; margin-bottom: 2px; }
+        .date-panel input { background: #2a2a2a; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; font-size: 11px; width: 100%; box-sizing: border-box; }
+        .btn { background: #00e676; color: #121212; font-weight: bold; border: none; padding: 8px 12px; border-radius: 4px; font-size: 11px; cursor: pointer; width: 100%; margin-top: 6px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { padding: 6px; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 11px; }
+        th { color: #888; background: #181818; }
     </style>
 </head>
 <body>
     <div class="card">
         <div class="header">⚡ Master Screener & Backtest Engine</div>
-        <div class="subtitle">Snapshot: {get_ist_time()} | Matches: <span id="match-count">0</span></div>
+        <div class="subtitle">Snapshot: __IST_TIME__ | Matches: <span id="match-count">0</span></div>
         
         <div class="date-panel">
             <div>
@@ -151,10 +148,10 @@ def run_screener_engine():
             <input type="checkbox" id="f1_en" checked onchange="applyFilters()">
             <span>1. Close vs EMA 20</span>
             <select id="f1_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
-                <option value="&lt;=">&lt;=</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
+                <option value="<=">&lt;=</option>
                 <option value="==">==</option>
                 <option value="crossed_above">Crossed Above</option>
                 <option value="crossed_below">Crossed Below</option>
@@ -166,9 +163,9 @@ def run_screener_engine():
             <input type="checkbox" id="f2_en" checked onchange="applyFilters()">
             <span>2. RVOL</span>
             <select id="f2_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f2_val" value="1.5" step="0.1" oninput="applyFilters()">
@@ -178,9 +175,9 @@ def run_screener_engine():
             <input type="checkbox" id="f3_en" checked onchange="applyFilters()">
             <span>3. Min % Change</span>
             <select id="f3_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f3_val" value="2.0" step="0.5" oninput="applyFilters()">
@@ -190,9 +187,9 @@ def run_screener_engine():
             <input type="checkbox" id="f4_en" checked onchange="applyFilters()">
             <span>4. Max % Change</span>
             <select id="f4_op" onchange="applyFilters()">
-                <option value="&lt;">&lt;</option>
-                <option value="&lt;=" selected>&lt;=</option>
-                <option value="&gt;">&gt;</option>
+                <option value="<">&lt;</option>
+                <option value="<=" selected>&lt;=</option>
+                <option value=">">&gt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f4_val" value="10.0" step="0.5" oninput="applyFilters()">
@@ -202,9 +199,9 @@ def run_screener_engine():
             <input type="checkbox" id="f5_en" checked onchange="applyFilters()">
             <span>5. Min Daily Close</span>
             <select id="f5_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f5_val" value="100" step="10" oninput="applyFilters()">
@@ -214,9 +211,9 @@ def run_screener_engine():
             <input type="checkbox" id="f6_en" checked onchange="applyFilters()">
             <span>6. Max Daily Close</span>
             <select id="f6_op" onchange="applyFilters()">
-                <option value="&lt;">&lt;</option>
-                <option value="&lt;=" selected>&lt;=</option>
-                <option value="&gt;">&gt;</option>
+                <option value="<">&lt;</option>
+                <option value="<=" selected>&lt;=</option>
+                <option value=">">&gt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f6_val" value="2000" step="50" oninput="applyFilters()">
@@ -226,9 +223,9 @@ def run_screener_engine():
             <input type="checkbox" id="f7_en" checked onchange="applyFilters()">
             <span>7. Min Turnover (Cr)</span>
             <select id="f7_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f7_val" value="50" step="5" oninput="applyFilters()">
@@ -238,8 +235,8 @@ def run_screener_engine():
             <input type="checkbox" id="f8_en" checked onchange="applyFilters()">
             <span>8. Close vs 365D High</span>
             <select id="f8_op" onchange="applyFilters()">
-                <option value="&gt;=" selected>&gt;= 365D High</option>
-                <option value="&lt;">&lt; 365D High</option>
+                <option value=">=" selected>&gt;= 365D High</option>
+                <option value="<">&lt; 365D High</option>
             </select>
             <span>High</span>
         </div>
@@ -248,9 +245,9 @@ def run_screener_engine():
             <input type="checkbox" id="f9_en" checked onchange="applyFilters()">
             <span>9. Min Upper Wick %</span>
             <select id="f9_op" onchange="applyFilters()">
-                <option value="&gt;">&gt;</option>
-                <option value="&gt;=" selected>&gt;=</option>
-                <option value="&lt;">&lt;</option>
+                <option value=">">&gt;</option>
+                <option value=">=" selected>&gt;=</option>
+                <option value="<">&lt;</option>
                 <option value="==">==</option>
             </select>
             <input type="number" id="f9_val" value="40" step="5" oninput="applyFilters()">
@@ -287,10 +284,10 @@ def run_screener_engine():
     </div>
 
     <script>
-        const records = {json_records};
+        const records = __JSON_DATA__;
         const dates = Object.keys(records).sort().reverse();
 
-        if (dates.length > 0) {{
+        if (dates.length > 0) {
             const latest = dates[0];
             const oldest = dates[dates.length - 1];
 
@@ -305,79 +302,79 @@ def run_screener_engine():
             document.getElementById('toDate').value = latest;
             document.getElementById('toDate').min = oldest;
             document.getElementById('toDate').max = latest;
-        }}
+        }
 
-        function compare(val1, op, val2) {{
-            if (op === '>' || op === '&gt;') return val1 > val2;
-            if (op === '>=' || op === '&gt;=') return val1 >= val2;
-            if (op === '<' || op === '&lt;') return val1 < val2;
-            if (op === '<=' || op === '&lt;=') return val1 <= val2;
+        function compare(val1, op, val2) {
+            if (op === '>') return val1 > val2;
+            if (op === '>=') return val1 >= val2;
+            if (op === '<') return val1 < val2;
+            if (op === '<=') return val1 <= val2;
             if (op === '==') return val1 === val2;
             return true;
-        }}
+        }
 
-        function evalStock(s) {{
-            if (document.getElementById('f1_en').checked) {{
+        function evalStock(s) {
+            if (document.getElementById('f1_en').checked) {
                 const op = document.getElementById('f1_op').value;
                 if (op === 'crossed_above' && !s.crossed_above_ema20) return false;
                 if (op === 'crossed_below' && !s.crossed_below_ema20) return false;
-                if (op !== 'crossed_above' && op !== 'crossed_below') {{
+                if (op !== 'crossed_above' && op !== 'crossed_below') {
                     if (!compare(s.close, op, s.ema20)) return false;
-                }}
-            }}
+                }
+            }
 
-            if (document.getElementById('f2_en').checked) {{
+            if (document.getElementById('f2_en').checked) {
                 const op = document.getElementById('f2_op').value;
                 const val = parseFloat(document.getElementById('f2_val').value) || 0;
                 if (!compare(s.rvol, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f3_en').checked) {{
+            if (document.getElementById('f3_en').checked) {
                 const op = document.getElementById('f3_op').value;
                 const val = parseFloat(document.getElementById('f3_val').value) || 0;
                 if (!compare(s.pct, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f4_en').checked) {{
+            if (document.getElementById('f4_en').checked) {
                 const op = document.getElementById('f4_op').value;
                 const val = parseFloat(document.getElementById('f4_val').value) || 0;
                 if (!compare(s.pct, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f5_en').checked) {{
+            if (document.getElementById('f5_en').checked) {
                 const op = document.getElementById('f5_op').value;
                 const val = parseFloat(document.getElementById('f5_val').value) || 0;
                 if (!compare(s.close, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f6_en').checked) {{
+            if (document.getElementById('f6_en').checked) {
                 const op = document.getElementById('f6_op').value;
                 const val = parseFloat(document.getElementById('f6_val').value) || 0;
                 if (!compare(s.close, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f7_en').checked) {{
+            if (document.getElementById('f7_en').checked) {
                 const op = document.getElementById('f7_op').value;
                 const val = parseFloat(document.getElementById('f7_val').value) || 0;
                 if (!compare(s.turnover, op, val)) return false;
-            }}
+            }
 
-            if (document.getElementById('f8_en').checked) {{
+            if (document.getElementById('f8_en').checked) {
                 const op = document.getElementById('f8_op').value;
-                if ((op === '>=' || op === '&gt;=') && s.close < s.max_365) return false;
-                if ((op === '<' || op === '&lt;') && s.close >= s.max_365) return false;
-            }}
+                if (op === '>=' && s.close < s.max_365) return false;
+                if (op === '<' && s.close >= s.max_365) return false;
+            }
 
-            if (document.getElementById('f9_en').checked) {{
+            if (document.getElementById('f9_en').checked) {
                 const op = document.getElementById('f9_op').value;
                 const val = parseFloat(document.getElementById('f9_val').value) || 0;
                 if (!compare(s.wick, op, val)) return false;
-            }}
+            }
 
             return true;
-        }}
+        }
 
-        function applyFilters() {{
+        function applyFilters() {
             const selDate = document.getElementById('singleDate').value;
             const searchSym = document.getElementById('searchSym').value.toUpperCase().trim();
 
@@ -387,65 +384,79 @@ def run_screener_engine():
             const dayData = records[selDate] || [];
             let matches = 0;
 
-            dayData.forEach(s => {{
-                if (evalStock(s)) {{
-                    if (searchSym === '' || s.sym.includes(searchSym)) {{
+            dayData.forEach(s => {
+                if (evalStock(s)) {
+                    if (searchSym === '' || s.sym.includes(searchSym)) {
                         matches++;
                         const color = s.pct > 0 ? '#00e676' : (s.pct < 0 ? '#ff5252' : '#888');
                         const sign = s.pct > 0 ? '+' : '';
 
                         const row = `<tr>
-                            <td><b>${{s.sym}}</b></td>
-                            <td>₹${{s.close}}</td>
-                            <td style="color:${{color}}; font-weight:bold;">${{sign}}${{s.pct}}%</td>
-                            <td>${{s.rvol}}x</td>
-                            <td>₹${{s.turnover}} Cr</td>
-                            <td>${{s.wick}}%</td>
+                            <td><b>${s.sym}</b></td>
+                            <td>₹${s.close}</td>
+                            <td style="color:${color}; font-weight:bold;">${sign}${s.pct}%</td>
+                            <td>${s.rvol}x</td>
+                            <td>₹${s.turnover} Cr</td>
+                            <td>${s.wick}%</td>
                         </tr>`;
                         tbody.innerHTML += row;
-                    }}
-                }}
-            }});
+                    }
+                }
+            });
 
             document.getElementById('match-count').innerText = matches;
-            if (matches === 0) {{
+            if (matches === 0) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#888;">No stocks match your active filters on selected date.</td></tr>';
-            }}
-        }}
+            }
+        }
 
-        function downloadBacktestCSV() {{
+        function downloadBacktestCSV() {
             const fromStr = document.getElementById('fromDate').value;
             const toStr = document.getElementById('toDate').value;
 
-            if (!fromStr || !toStr) {{
+            if (!fromStr || !toStr) {
                 alert('Please select both From Date and To Date');
                 return;
-            }}
+            }
 
             let csvRows = ['Date,Symbol,Close,PctChange,RVOL,Turnover_Cr,UpperWickPct,EMA20'];
 
-            dates.forEach(d => {{
-                if (d >= fromStr && d <= toStr) {{
+            dates.forEach(d => {
+                if (d >= fromStr && d <= toStr) {
                     const dayData = records[d] || [];
-                    dayData.forEach(s => {{
-                        if (evalStock(s)) {{
-                            csvRows.push(`${{d}},${{s.sym}},${{s.close}},${{s.pct}},${{s.rvol}},${{s.turnover}},${{s.wick}},${{s.ema20}}`);
-                        }}
-                    }});
-                }}
-            }});
+                    dayData.forEach(s => {
+                        if (evalStock(s)) {
+                            csvRows.push(`${d},${s.sym},${s.close},${s.pct},${s.rvol},${s.turnover},${s.wick},${s.ema20}`);
+                        }
+                    });
+                }
+            });
 
-            if (csvRows.length <= 1) {{
+            if (csvRows.length <= 1) {
                 alert('No stocks matched your active filters in the chosen date range.');
                 return;
-            }}
+            }
 
-            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\\n");
+            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\n");
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `backtest_${{fromStr}}_to_${{toStr}}.csv`);
+            link.setAttribute("download", `backtest_${fromStr}_to_${toStr}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-        }}
+        }
+
+        applyFilters();
+    </script>
+</body>
+</html>"""
+
+    final_html = html_template.replace("__JSON_DATA__", json_records).replace("__IST_TIME__", get_ist_time())
+
+    with open("index.html", "w") as f:
+        f.write(final_html)
+
+if __name__ == "__main__":
+    run_screener_engine()
+    
