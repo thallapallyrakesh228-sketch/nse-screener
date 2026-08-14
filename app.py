@@ -33,24 +33,30 @@ if not raw_token:
 clean_token = raw_token.strip()
 AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
-# --- 1. INSTRUMENT MASTER FETCH ---
+# --- 1. INSTRUMENT MASTER FETCH WITH BROWSER USER-AGENT ---
 @st.cache_data(ttl=86400)
 def fetch_all_nse_instruments():
     url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     instruments = {}
     try:
-        res = requests.get(url, timeout=30)
+        res = requests.get(url, headers=headers, timeout=30)
         if res.status_code == 200:
             with gzip.open(io.BytesIO(res.content), mode='rt', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    # Upstox uses 'NSE_EQ' segment and 'EQ' instrument_type
-                    if row.get('segment') == 'NSE_EQ' and row.get('instrument_type') == 'EQ':
-                        key = row.get('instrument_key')
-                        # Column fix: Upstox uses 'tradingsymbol' (no underscore)
-                        sym = row.get('tradingsymbol') or row.get('name')
+                    seg = (row.get('segment') or row.get('exchange') or '').upper()
+                    itype = (row.get('instrument_type') or '').upper()
+                    key = row.get('instrument_key')
+                    sym = row.get('tradingsymbol') or row.get('trading_symbol') or row.get('name')
+                    
+                    if (seg in ['NSE_EQ', 'NSE']) and itype == 'EQ':
                         if key and sym and not sym.endswith("-BE") and not sym.endswith("-BZ"):
                             instruments[key] = sym
+        else:
+            st.error(f"Upstox Master File Download Failed: HTTP {res.status_code}")
     except Exception as e:
         st.error(f"Error fetching NSE master list: {e}")
     return instruments
@@ -63,7 +69,11 @@ def fetch_single_stock_history(key_sym_tuple, auth_token):
     
     encoded_key = urllib.parse.quote(key, safe='')
     url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{to_date}/{from_date}"
-    headers = {"Accept": "application/json", "Authorization": auth_token}
+    headers = {
+        "Accept": "application/json", 
+        "Authorization": auth_token,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
     
     try:
         res = requests.get(url, headers=headers, timeout=10)
@@ -318,4 +328,4 @@ if st.button("📥 Generate Backtest CSV (Active Filters)", type="primary"):
         st.success(f"Backtest complete! Found {len(backtest_rows)} total matching trades across range.")
     else:
         st.warning("No stock matches found in selected date range with active filters.")
-                
+                                       
