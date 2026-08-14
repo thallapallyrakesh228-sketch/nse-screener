@@ -3,6 +3,7 @@ import csv
 import io
 import time
 import urllib.parse
+import urllib.request
 import requests
 import pandas as pd
 import datetime
@@ -19,7 +20,7 @@ st.caption("All NSE Equity Stocks (~2,000+) | Powered by Upstox Analytics Token"
 raw_token = st.sidebar.text_input(
     "Upstox Access / Analytics Token", 
     type="password", 
-    value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw" # Keep your token string here
+    value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw" # Your token string
 )
 
 if st.sidebar.button("🔄 Clear Cache & Reload Data"):
@@ -33,32 +34,35 @@ if not raw_token:
 clean_token = raw_token.strip()
 AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
-# --- 1. INSTRUMENT MASTER FETCH WITH BROWSER USER-AGENT ---
+# --- 1. BULLETPROOF INSTRUMENT MASTER FETCH ---
 @st.cache_data(ttl=86400)
 def fetch_all_nse_instruments():
     url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    req = urllib.request.Request(
+        url, 
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+    )
     instruments = {}
+    
     try:
-        res = requests.get(url, headers=headers, timeout=30)
-        if res.status_code == 200:
-            with gzip.open(io.BytesIO(res.content), mode='rt', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            content = response.read()
+            with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
+                reader = csv.DictReader(io.TextIOWrapper(gz, encoding='utf-8'))
                 for row in reader:
-                    seg = (row.get('segment') or row.get('exchange') or '').upper()
-                    itype = (row.get('instrument_type') or '').upper()
+                    seg = str(row.get('segment') or row.get('exchange') or '').upper()
+                    itype = str(row.get('instrument_type') or '').upper()
                     key = row.get('instrument_key')
                     sym = row.get('tradingsymbol') or row.get('trading_symbol') or row.get('name')
                     
-                    if (seg in ['NSE_EQ', 'NSE']) and itype == 'EQ':
+                    if ('NSE_EQ' in seg or seg == 'NSE') and itype == 'EQ':
                         if key and sym and not sym.endswith("-BE") and not sym.endswith("-BZ"):
                             instruments[key] = sym
-        else:
-            st.error(f"Upstox Master File Download Failed: HTTP {res.status_code}")
     except Exception as e:
-        st.error(f"Error fetching NSE master list: {e}")
+        st.error(f"Master CSV Download Error: {e}")
+        
     return instruments
 
 # --- 2. SINGLE STOCK CANDLE FETCH ---
@@ -328,4 +332,4 @@ if st.button("📥 Generate Backtest CSV (Active Filters)", type="primary"):
         st.success(f"Backtest complete! Found {len(backtest_rows)} total matching trades across range.")
     else:
         st.warning("No stock matches found in selected date range with active filters.")
-                                       
+    
