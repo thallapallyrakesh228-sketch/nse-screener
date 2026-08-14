@@ -1,9 +1,10 @@
 import gzip
 import csv
 import io
+import time
+import urllib.parse
 import requests
 import pandas as pd
-import numpy as np
 import datetime
 from datetime import timedelta
 import concurrent.futures
@@ -12,14 +13,22 @@ import streamlit as st
 st.set_page_config(page_title="NSE Master Screener & Backtester", layout="wide")
 
 st.title("⚡ NSE Master Screener & 3-Year Backtest Engine")
-st.caption("All NSE Equity Stocks (~2,000+) | Multi-Threaded Cloud Architecture")
+st.caption("All NSE Equity Stocks (~2,000+) | Powered by Upstox Analytics Token")
 
 # --- TOKEN INPUT ---
-UPSTOX_TOKEN = st.sidebar.text_input("eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw", type="password", value="")
+raw_token = st.sidebar.text_input("Upstox Access / Analytics Token", type="password", value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw")
 
-if not UPSTOX_TOKEN:
-    st.info("👈 Please enter your Upstox Access Token in the sidebar to begin.")
+if st.sidebar.button("🔄 Clear Cache & Reload Data"):
+    st.cache_data.clear()
+    st.rerun()
+
+if not raw_token:
+    st.info("👈 Please paste your valid Upstox Access or Analytics Token in the sidebar to begin.")
     st.stop()
+
+# Ensure Bearer prefix is handled automatically
+clean_token = raw_token.strip()
+AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
 # --- 1. INSTRUMENT MASTER FETCH ---
 @st.cache_data(ttl=86400)
@@ -41,161 +50,166 @@ def fetch_all_nse_instruments():
         st.error(f"Error fetching NSE master list: {e}")
     return instruments
 
-# --- 2. MULTI-THREADED CANDLE FETCH ---
-def fetch_single_stock_history(key_sym_tuple, token):
+# --- 2. SINGLE STOCK FETCH WITH URL ENCODING & ERROR HANDLING ---
+def fetch_single_stock_history(key_sym_tuple, auth_token):
     key, symbol = key_sym_tuple
     to_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     from_date = (datetime.datetime.now(datetime.timezone.utc) - timedelta(days=3*365)).strftime("%Y-%m-%d")
     
-    url = f"https://api.upstox.com/v2/historical-candle/{key}/day/{to_date}/{from_date}"
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+    # URL Encode instrument key (e.g., 'NSE_EQ|INE002A01018' -> 'NSE_EQ%7CINE002A01018')
+    encoded_key = urllib.parse.quote(key, safe='')
+    url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{to_date}/{from_date}"
+    headers = {"Accept": "application/json", "Authorization": auth_token}
     
     try:
-        res = requests.get(url, headers=headers, timeout=8)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             candles = res.json().get("data", {}).get("candles", [])
             if candles and len(candles) >= 20:
-                return symbol, candles
-    except Exception:
-        pass
-    return symbol, None
+                return symbol, candles, 200, None
+        return symbol, None, res.status_code, res.text
+    except Exception as e:
+        return symbol, None, 500, str(e)
 
 @st.cache_data(ttl=14400, show_spinner="Processing 3-Year Historical Data for ~2,000 NSE Stocks...")
-def load_all_market_data(token):
+def load_all_market_data(auth_token):
     instruments = fetch_all_nse_instruments()
     items = list(instruments.items())
     
     date_records = {} # { "YYYY-MM-DD": [ {stock_dict}, ... ] }
+    error_summary = {}
 
-    # Fetch candles concurrently using 20 parallel worker threads
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [executor.submit(fetch_single_stock_history, item, token) for item in items]
+    # Execute in rate-limited batches with 12 parallel threads
+    batch_size = 40
+    for b_idx in range(0, len(items), batch_size):
+        batch = items[b_idx:b_idx + batch_size]
         
-        for future in concurrent.futures.as_completed(futures):
-            symbol, candles = future.result()
-            if not candles:
-                continue
-
-            chrono_candles = list(reversed(candles))
-            closes = [c[4] for c in chrono_candles]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [executor.submit(fetch_single_stock_history, item, auth_token) for item in batch]
             
-            # EMA 20 Series
-            ema20_series = []
-            k = 2 / (20 + 1)
-            curr_ema = None
-            for idx, cl in enumerate(closes):
-                if idx < 19:
-                    ema20_series.append(cl)
-                elif idx == 19:
-                    curr_ema = sum(closes[:20]) / 20.0
-                    ema20_series.append(curr_ema)
-                else:
-                    curr_ema = (cl * k) + (curr_ema * (1 - k))
-                    ema20_series.append(curr_ema)
+            for future in concurrent.futures.as_completed(futures):
+                symbol, candles, status, err_msg = future.result()
+                
+                if status != 200:
+                    error_summary[status] = error_summary.get(status, 0) + 1
+                    
+                if not candles:
+                    continue
 
-            for i in range(len(chrono_candles)):
-                c = chrono_candles[i]
-                dt = c[0].split("T")[0]
-                op, hi, lo, cl, vol = c[1], c[2], c[3], c[4], c[5]
+                chrono_candles = list(reversed(candles))
+                closes = [c[4] for c in chrono_candles]
                 
-                prev_cl = chrono_candles[i-1][4] if i > 0 else cl
-                prev_ema20 = ema20_series[i-1] if i > 0 else ema20_series[i]
-                curr_ema20 = ema20_series[i]
-                
-                pct_chg = round(((cl - prev_cl) / prev_cl) * 100.0, 2) if prev_cl > 0 else 0.0
-                turnover_cr = round((cl * vol) / 10000000.0, 2)
-                
-                span = hi - lo
-                upper_wick = round((((hi - max(op, cl)) / span) * 100.0), 1) if span > 0 else 0.0
-                
-                past_vols = [x[5] for x in chrono_candles[max(0, i-20):i]]
-                avg_vol20 = sum(past_vols) / len(past_vols) if past_vols else vol
-                rvol = round(vol / avg_vol20, 2) if avg_vol20 > 0 else 1.0
-                
-                past_365_highs = [x[2] for x in chrono_candles[max(0, i-365):i]]
-                max_365 = max(past_365_highs) if past_365_highs else hi
-                
-                crossed_above_ema20 = (prev_cl <= prev_ema20 and cl > curr_ema20)
-                crossed_below_ema20 = (prev_cl >= prev_ema20 and cl < curr_ema20)
+                # EMA 20
+                ema20_series = []
+                k = 2 / (20 + 1)
+                curr_ema = None
+                for idx, cl in enumerate(closes):
+                    if idx < 19:
+                        ema20_series.append(cl)
+                    elif idx == 19:
+                        curr_ema = sum(closes[:20]) / 20.0
+                        ema20_series.append(curr_ema)
+                    else:
+                        curr_ema = (cl * k) + (curr_ema * (1 - k))
+                        ema20_series.append(curr_ema)
 
-                rec = {
-                    "sym": symbol,
-                    "close": round(cl, 2),
-                    "pct": pct_chg,
-                    "turnover": turnover_cr,
-                    "rvol": rvol,
-                    "ema20": round(curr_ema20, 2),
-                    "max_365": round(max_365, 2),
-                    "crossed_above": crossed_above_ema20,
-                    "crossed_below": crossed_below_ema20,
-                    "wick": upper_wick
-                }
-                
-                if dt not in date_records:
-                    date_records[dt] = []
-                date_records[dt].append(rec)
+                for i in range(len(chrono_candles)):
+                    c = chrono_candles[i]
+                    dt = c[0].split("T")[0]
+                    op, hi, lo, cl, vol = c[1], c[2], c[3], c[4], c[5]
+                    
+                    prev_cl = chrono_candles[i-1][4] if i > 0 else cl
+                    prev_ema20 = ema20_series[i-1] if i > 0 else ema20_series[i]
+                    curr_ema20 = ema20_series[i]
+                    
+                    pct_chg = round(((cl - prev_cl) / prev_cl) * 100.0, 2) if prev_cl > 0 else 0.0
+                    turnover_cr = round((cl * vol) / 10000000.0, 2)
+                    
+                    span = hi - lo
+                    upper_wick = round((((hi - max(op, cl)) / span) * 100.0), 1) if span > 0 else 0.0
+                    
+                    past_vols = [x[5] for x in chrono_candles[max(0, i-20):i]]
+                    avg_vol20 = sum(past_vols) / len(past_vols) if past_vols else vol
+                    rvol = round(vol / avg_vol20, 2) if avg_vol20 > 0 else 1.0
+                    
+                    past_365_highs = [x[2] for x in chrono_candles[max(0, i-365):i]]
+                    max_365 = max(past_365_highs) if past_365_highs else hi
+                    
+                    crossed_above_ema20 = (prev_cl <= prev_ema20 and cl > curr_ema20)
+                    crossed_below_ema20 = (prev_cl >= prev_ema20 and cl < curr_ema20)
 
-    return date_records
+                    rec = {
+                        "sym": symbol,
+                        "close": round(cl, 2),
+                        "pct": pct_chg,
+                        "turnover": turnover_cr,
+                        "rvol": rvol,
+                        "ema20": round(curr_ema20, 2),
+                        "max_365": round(max_365, 2),
+                        "crossed_above": crossed_above_ema20,
+                        "crossed_below": crossed_below_ema20,
+                        "wick": upper_wick
+                    }
+                    
+                    if dt not in date_records:
+                        date_records[dt] = []
+                    date_records[dt].append(rec)
+                    
+        time.sleep(0.25)
 
-market_data = load_all_market_data(UPSTOX_TOKEN)
+    return date_records, error_summary
+
+market_data, err_summary = load_all_market_data(AUTH_HEADER)
 all_dates = sorted(list(market_data.keys()), reverse=True)
 
 if not all_dates:
-    st.warning("No data retrieved. Please verify your Upstox token.")
+    st.error("⚠️ Failed to load stock data. API Status Summary:")
+    st.write(err_summary)
+    st.info("Please click '🔄 Clear Cache & Reload Data' in the sidebar.")
     st.stop()
 
 # --- SIDEBAR 9 MASTER FILTERS ---
 st.sidebar.markdown("### 🎛️ 9 Master Filters")
-
 ops = [">=", ">", "<=", "<", "=="]
 
-# 1. Close vs EMA 20
 f1_en = st.sidebar.checkbox("1. Close vs EMA 20", value=True)
 f1_op = st.sidebar.selectbox("EMA 20 Operator", [">=", ">", "<=", "<", "==", "Crossed Above", "Crossed Below"], index=0)
 
-# 2. RVOL
 f2_en = st.sidebar.checkbox("2. Relative Volume (RVOL)", value=True)
 c1, c2 = st.sidebar.columns(2)
 f2_op = c1.selectbox("RVOL Op", ops, index=0)
 f2_val = c2.number_input("RVOL Min", value=1.5, step=0.1)
 
-# 3. Min % Change
 f3_en = st.sidebar.checkbox("3. Min % Change", value=True)
 c1, c2 = st.sidebar.columns(2)
 f3_op = c1.selectbox("Min % Op", ops, index=0)
 f3_val = c2.number_input("Min % Val", value=2.0, step=0.5)
 
-# 4. Max % Change
 f4_en = st.sidebar.checkbox("4. Max % Change", value=True)
 c1, c2 = st.sidebar.columns(2)
 f4_op = c1.selectbox("Max % Op", ops, index=2)
 f4_val = c2.number_input("Max % Val", value=10.0, step=0.5)
 
-# 5. Min Daily Close
 f5_en = st.sidebar.checkbox("5. Min Daily Close", value=True)
 c1, c2 = st.sidebar.columns(2)
 f5_op = c1.selectbox("Min Price Op", ops, index=0)
 f5_val = c2.number_input("Min Price (₹)", value=100.0, step=10.0)
 
-# 6. Max Daily Close
 f6_en = st.sidebar.checkbox("6. Max Daily Close", value=True)
 c1, c2 = st.sidebar.columns(2)
 f6_op = c1.selectbox("Max Price Op", ops, index=2)
 f6_val = c2.number_input("Max Price (₹)", value=2000.0, step=50.0)
 
-# 7. Min Turnover
 f7_en = st.sidebar.checkbox("7. Min Turnover (Cr)", value=True)
 c1, c2 = st.sidebar.columns(2)
 f7_op = c1.selectbox("Turnover Op", ops, index=0)
 f7_val = c2.number_input("Turnover (Cr)", value=50.0, step=5.0)
 
-# 8. Close vs 365D High
 f8_en = st.sidebar.checkbox("8. Close vs 365D High", value=True)
 c1, c2 = st.sidebar.columns(2)
 f8_op = c1.selectbox("365D Op", ops, index=0)
 f8_val = c2.number_input("365D High Mult", value=1.0, step=0.05)
 
-# 9. Min Upper Wick %
 f9_en = st.sidebar.checkbox("9. Min Upper Wick %", value=True)
 c1, c2 = st.sidebar.columns(2)
 f9_op = c1.selectbox("Wick Op", ops, index=0)
@@ -229,7 +243,6 @@ def eval_stock_record(s):
 # --- MAIN SCREEN VIEW ---
 col_date, col_search = st.columns([1, 1])
 
-# Auto default to latest available trading date
 sel_date = col_date.date_input("Inspector Date", value=datetime.datetime.strptime(all_dates[0], "%Y-%m-%d").date(),
                                 min_value=datetime.datetime.strptime(all_dates[-1], "%Y-%m-%d").date(),
                                 max_value=datetime.datetime.strptime(all_dates[0], "%Y-%m-%d").date())
@@ -292,4 +305,4 @@ if st.button("📥 Generate Backtest CSV (Active Filters)", type="primary"):
         st.success(f"Backtest complete! Found {len(backtest_rows)} total matching trades across range.")
     else:
         st.warning("No stock matches found in selected date range with active filters.")
-                      
+                        
