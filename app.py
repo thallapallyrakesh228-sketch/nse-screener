@@ -16,7 +16,11 @@ st.title("⚡ NSE Master Screener & 3-Year Backtest Engine")
 st.caption("All NSE Equity Stocks (~2,000+) | Powered by Upstox Analytics Token")
 
 # --- TOKEN INPUT ---
-raw_token = st.sidebar.text_input("Upstox Access / Analytics Token", type="password", value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw")
+raw_token = st.sidebar.text_input(
+    "Upstox Access / Analytics Token", 
+    type="password", 
+    value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw" # Keep your token string here
+)
 
 if st.sidebar.button("🔄 Clear Cache & Reload Data"):
     st.cache_data.clear()
@@ -26,7 +30,6 @@ if not raw_token:
     st.info("👈 Please paste your valid Upstox Access or Analytics Token in the sidebar to begin.")
     st.stop()
 
-# Ensure Bearer prefix is handled automatically
 clean_token = raw_token.strip()
 AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
@@ -41,22 +44,23 @@ def fetch_all_nse_instruments():
             with gzip.open(io.BytesIO(res.content), mode='rt', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # Upstox uses 'NSE_EQ' segment and 'EQ' instrument_type
                     if row.get('segment') == 'NSE_EQ' and row.get('instrument_type') == 'EQ':
                         key = row.get('instrument_key')
-                        sym = row.get('trading_symbol') or row.get('name')
+                        # Column fix: Upstox uses 'tradingsymbol' (no underscore)
+                        sym = row.get('tradingsymbol') or row.get('name')
                         if key and sym and not sym.endswith("-BE") and not sym.endswith("-BZ"):
                             instruments[key] = sym
     except Exception as e:
         st.error(f"Error fetching NSE master list: {e}")
     return instruments
 
-# --- 2. SINGLE STOCK FETCH WITH URL ENCODING & ERROR HANDLING ---
+# --- 2. SINGLE STOCK CANDLE FETCH ---
 def fetch_single_stock_history(key_sym_tuple, auth_token):
     key, symbol = key_sym_tuple
     to_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     from_date = (datetime.datetime.now(datetime.timezone.utc) - timedelta(days=3*365)).strftime("%Y-%m-%d")
     
-    # URL Encode instrument key (e.g., 'NSE_EQ|INE002A01018' -> 'NSE_EQ%7CINE002A01018')
     encoded_key = urllib.parse.quote(key, safe='')
     url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{to_date}/{from_date}"
     headers = {"Accept": "application/json", "Authorization": auth_token}
@@ -66,29 +70,35 @@ def fetch_single_stock_history(key_sym_tuple, auth_token):
         if res.status_code == 200:
             candles = res.json().get("data", {}).get("candles", [])
             if candles and len(candles) >= 20:
-                return symbol, candles, 200, None
-        return symbol, None, res.status_code, res.text
-    except Exception as e:
-        return symbol, None, 500, str(e)
+                return symbol, candles, 200
+        return symbol, None, res.status_code
+    except Exception:
+        return symbol, None, 500
 
-@st.cache_data(ttl=14400, show_spinner="Processing 3-Year Historical Data for ~2,000 NSE Stocks...")
+@st.cache_data(ttl=14400, show_spinner=False)
 def load_all_market_data(auth_token):
     instruments = fetch_all_nse_instruments()
     items = list(instruments.items())
     
-    date_records = {} # { "YYYY-MM-DD": [ {stock_dict}, ... ] }
+    if not items:
+        return {}, {0: "No instruments found in master CSV"}
+
+    date_records = {}
     error_summary = {}
 
-    # Execute in rate-limited batches with 12 parallel threads
-    batch_size = 40
-    for b_idx in range(0, len(items), batch_size):
+    batch_size = 50
+    total_items = len(items)
+    
+    progress_bar = st.progress(0, text=f"Fetching 3-Year Data for {total_items} NSE Stocks...")
+
+    for b_idx in range(0, total_items, batch_size):
         batch = items[b_idx:b_idx + batch_size]
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
             futures = [executor.submit(fetch_single_stock_history, item, auth_token) for item in batch]
             
             for future in concurrent.futures.as_completed(futures):
-                symbol, candles, status, err_msg = future.result()
+                symbol, candles, status = future.result()
                 
                 if status != 200:
                     error_summary[status] = error_summary.get(status, 0) + 1
@@ -99,7 +109,7 @@ def load_all_market_data(auth_token):
                 chrono_candles = list(reversed(candles))
                 closes = [c[4] for c in chrono_candles]
                 
-                # EMA 20
+                # EMA 20 Series
                 ema20_series = []
                 k = 2 / (20 + 1)
                 curr_ema = None
@@ -155,15 +165,18 @@ def load_all_market_data(auth_token):
                         date_records[dt] = []
                     date_records[dt].append(rec)
                     
-        time.sleep(0.25)
+        pct_done = min(1.0, (b_idx + batch_size) / total_items)
+        progress_bar.progress(pct_done, text=f"Processed {min(b_idx + batch_size, total_items)} / {total_items} NSE Stocks...")
+        time.sleep(0.1)
 
+    progress_bar.empty()
     return date_records, error_summary
 
 market_data, err_summary = load_all_market_data(AUTH_HEADER)
 all_dates = sorted(list(market_data.keys()), reverse=True)
 
 if not all_dates:
-    st.error("⚠️ Failed to load stock data. API Status Summary:")
+    st.error("⚠️ Failed to load stock data. Status Summary:")
     st.write(err_summary)
     st.info("Please click '🔄 Clear Cache & Reload Data' in the sidebar.")
     st.stop()
@@ -305,4 +318,4 @@ if st.button("📥 Generate Backtest CSV (Active Filters)", type="primary"):
         st.success(f"Backtest complete! Found {len(backtest_rows)} total matching trades across range.")
     else:
         st.warning("No stock matches found in selected date range with active filters.")
-                        
+                
