@@ -1,9 +1,7 @@
-import gzip
-import csv
-import io
+import os
+import json
 import time
 import urllib.parse
-import urllib.request
 import requests
 import pandas as pd
 import datetime
@@ -20,7 +18,7 @@ st.caption("All NSE Equity Stocks (~2,000+) | Powered by Upstox Analytics Token"
 raw_token = st.sidebar.text_input(
     "Upstox Access / Analytics Token", 
     type="password", 
-    value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw" # Your token string
+    value="eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI0NDUzMzIiLCJqdGkiOiI2YTdjMzFmYmM2Yzk1NDZlZTAzMzdmYTMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaXNFeHRlbmRlZCI6dHJ1ZSwiaWF0IjoxNzg2NTI0MTU1LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE4MTgxMDgwMDB9.QDozpxTAGcZt6ldjEDj__J_sQmRUOul53IFJ3KQrxIw"
 )
 
 if st.sidebar.button("🔄 Clear Cache & Reload Data"):
@@ -34,36 +32,19 @@ if not raw_token:
 clean_token = raw_token.strip()
 AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
-# --- 1. BULLETPROOF INSTRUMENT MASTER FETCH ---
+# --- 1. READ ALL ~2,000+ STOCKS FROM LOCAL JSON ---
 @st.cache_data(ttl=86400)
-def fetch_all_nse_instruments():
-    url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
-    req = urllib.request.Request(
-        url, 
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        }
-    )
-    instruments = {}
-    
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            content = response.read()
-            with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
-                reader = csv.DictReader(io.TextIOWrapper(gz, encoding='utf-8'))
-                for row in reader:
-                    seg = str(row.get('segment') or row.get('exchange') or '').upper()
-                    itype = str(row.get('instrument_type') or '').upper()
-                    key = row.get('instrument_key')
-                    sym = row.get('tradingsymbol') or row.get('trading_symbol') or row.get('name')
-                    
-                    if ('NSE_EQ' in seg or seg == 'NSE') and itype == 'EQ':
-                        if key and sym and not sym.endswith("-BE") and not sym.endswith("-BZ"):
-                            instruments[key] = sym
-    except Exception as e:
-        st.error(f"Master CSV Download Error: {e}")
-        
-    return instruments
+def load_local_nse_instruments():
+    file_path = "instruments.json"
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data:
+                    return data
+        except Exception as e:
+            st.error(f"Error reading instruments.json: {e}")
+    return {}
 
 # --- 2. SINGLE STOCK CANDLE FETCH ---
 def fetch_single_stock_history(key_sym_tuple, auth_token):
@@ -91,11 +72,11 @@ def fetch_single_stock_history(key_sym_tuple, auth_token):
 
 @st.cache_data(ttl=14400, show_spinner=False)
 def load_all_market_data(auth_token):
-    instruments = fetch_all_nse_instruments()
+    instruments = load_local_nse_instruments()
     items = list(instruments.items())
     
     if not items:
-        return {}, {0: "No instruments found in master CSV"}
+        return {}, {0: "instruments.json is missing or empty. Please check your GitHub repository."}
 
     date_records = {}
     error_summary = {}
@@ -181,7 +162,7 @@ def load_all_market_data(auth_token):
                     
         pct_done = min(1.0, (b_idx + batch_size) / total_items)
         progress_bar.progress(pct_done, text=f"Processed {min(b_idx + batch_size, total_items)} / {total_items} NSE Stocks...")
-        time.sleep(0.1)
+        time.sleep(0.05)
 
     progress_bar.empty()
     return date_records, error_summary
@@ -332,4 +313,3 @@ if st.button("📥 Generate Backtest CSV (Active Filters)", type="primary"):
         st.success(f"Backtest complete! Found {len(backtest_rows)} total matching trades across range.")
     else:
         st.warning("No stock matches found in selected date range with active filters.")
-    
