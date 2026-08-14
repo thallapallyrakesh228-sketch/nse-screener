@@ -1,5 +1,8 @@
 import os
 import json
+import gzip
+import csv
+import io
 import time
 import urllib.parse
 import requests
@@ -32,18 +35,53 @@ if not raw_token:
 clean_token = raw_token.strip()
 AUTH_HEADER = clean_token if clean_token.startswith("Bearer ") else f"Bearer {clean_token}"
 
-# --- 1. READ ALL ~2,000+ STOCKS FROM LOCAL JSON ---
+# --- 1. TRIPLE-FALLBACK INSTRUMENT MASTER FETCH ---
 @st.cache_data(ttl=86400)
-def load_local_nse_instruments():
-    file_path = "instruments.json"
-    if os.path.exists(file_path):
+def load_all_nse_instruments():
+    # Fallback 1: Local disk path relative to app.py
+    local_path = os.path.join(os.path.dirname(__file__), "instruments.json")
+    if os.path.exists(local_path):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if data:
+                if data and len(data) > 0:
                     return data
-        except Exception as e:
-            st.error(f"Error reading instruments.json: {e}")
+        except Exception:
+            pass
+
+    # Fallback 2: Direct GitHub Raw URL
+    raw_url = "https://raw.githubusercontent.com/thallapallyrakesh228-sketch/nse-screener/main/instruments.json"
+    try:
+        res = requests.get(raw_url, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if data and len(data) > 0:
+                return data
+    except Exception:
+        pass
+
+    # Fallback 3: Live Upstox Master CSV
+    upstox_url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    instruments = {}
+    try:
+        res = requests.get(upstox_url, headers=headers, timeout=15)
+        if res.status_code == 200:
+            with gzip.open(io.BytesIO(res.content), mode='rt', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    seg = str(row.get('segment') or row.get('exchange') or '').upper()
+                    itype = str(row.get('instrument_type') or '').upper()
+                    key = row.get('instrument_key')
+                    sym = row.get('tradingsymbol') or row.get('trading_symbol') or row.get('name')
+                    if ('NSE_EQ' in seg or seg == 'NSE') and itype == 'EQ':
+                        if key and sym and not sym.endswith('-BE') and not sym.endswith('-BZ'):
+                            instruments[key] = sym
+            if instruments:
+                return instruments
+    except Exception:
+        pass
+
     return {}
 
 # --- 2. SINGLE STOCK CANDLE FETCH ---
@@ -72,11 +110,11 @@ def fetch_single_stock_history(key_sym_tuple, auth_token):
 
 @st.cache_data(ttl=14400, show_spinner=False)
 def load_all_market_data(auth_token):
-    instruments = load_local_nse_instruments()
+    instruments = load_all_nse_instruments()
     items = list(instruments.items())
     
     if not items:
-        return {}, {0: "instruments.json is missing or empty. Please check your GitHub repository."}
+        return {}, {0: "Unable to load stock list from local file, GitHub raw URL, or Upstox master file."}
 
     date_records = {}
     error_summary = {}
